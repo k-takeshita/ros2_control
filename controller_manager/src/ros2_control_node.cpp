@@ -109,8 +109,7 @@ int main(int argc, char ** argv)
       // for calculating sleep time
       auto const period = std::chrono::nanoseconds(1'000'000'000 / cm->get_update_rate());
       auto const cm_now = std::chrono::nanoseconds(cm->now().nanoseconds());
-      std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds>
-        next_iteration_time{cm_now};
+      std::chrono::steady_clock::time_point next_iteration_time{std::chrono::steady_clock::now()};
 
       // for calculating the measured period of the loop
       rclcpp::Time previous_time = cm->now();
@@ -123,9 +122,13 @@ int main(int argc, char ** argv)
         previous_time = current_time;
 
         // execute update loop
+        const auto start_time = std::chrono::steady_clock::now();
         cm->read(cm->now(), measured_period);
+        const auto read_end_time = std::chrono::steady_clock::now();
         cm->update(cm->now(), measured_period);
+        const auto update_end_time = std::chrono::steady_clock::now();
         cm->write(cm->now(), measured_period);
+        const auto end_time = std::chrono::steady_clock::now();
 
         // wait until we hit the end of the period
         next_iteration_time += period;
@@ -135,6 +138,35 @@ int main(int argc, char ** argv)
         }
         else
         {
+          const auto time_now = std::chrono::steady_clock::now();
+          if (next_iteration_time < time_now) {
+            const double time_diff =
+              static_cast<double>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(time_now - next_iteration_time)
+                  .count()) / 1.e6;
+            const double cm_period = 1.e3 / static_cast<double>(cm->get_update_rate());
+            const int overrun_count = static_cast<int>(std::ceil(time_diff / cm_period));
+            next_iteration_time += (overrun_count * period);
+            RCLCPP_WARN(
+              cm->get_logger(),
+              "Controller Manager '%s' overran its cycle time by %.3f ms (%d overrun(s))",
+              cm->get_name(), time_diff, overrun_count);
+            RCLCPP_WARN(
+              cm->get_logger(),
+              "  Read took %.3f ms, Update took %.3f ms, Write took %.3f ms",
+              static_cast<double>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(read_end_time - start_time)
+                  .count()) /
+                1.e6,
+              static_cast<double>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(update_end_time - read_end_time)
+                  .count()) /
+                1.e6,
+              static_cast<double>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - update_end_time)
+                  .count()) /
+                1.e6);
+          }
           std::this_thread::sleep_until(next_iteration_time);
         }
       }
