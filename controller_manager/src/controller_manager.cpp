@@ -926,18 +926,19 @@ controller_interface::return_type ControllerManager::configure_controller(
 void ControllerManager::clear_requests()
 {
   switch_params_.do_switch = false;
-  deactivate_request_.clear();
-  activate_request_.clear();
+  switch_params_.activate_asap = false;
+  switch_params_.deactivate_request.clear();
+  switch_params_.activate_request.clear();
   // Set these interfaces as unavailable when clearing requests to avoid leaving them in available
   // state without the controller being in active state
-  for (const auto & controller_name : to_chained_mode_request_)
+  for (const auto & controller_name : switch_params_.to_chained_mode_request)
   {
     resource_manager_->make_controller_reference_interfaces_unavailable(controller_name);
   }
-  to_chained_mode_request_.clear();
-  from_chained_mode_request_.clear();
-  activate_command_interface_request_.clear();
-  deactivate_command_interface_request_.clear();
+  switch_params_.to_chained_mode_request.clear();
+  switch_params_.from_chained_mode_request.clear();
+  switch_params_.activate_command_interface_request.clear();
+  switch_params_.deactivate_command_interface_request.clear();
 }
 
 controller_interface::return_type ControllerManager::switch_controller(
@@ -948,7 +949,7 @@ controller_interface::return_type ControllerManager::switch_controller(
   // reset the switch param internal variables
   switch_params_.reset();
 
-  if (!deactivate_request_.empty() || !activate_request_.empty())
+  if (!switch_params_.deactivate_request.empty() || !switch_params_.activate_request.empty())
   {
     RCLCPP_FATAL(
       get_logger(),
@@ -956,8 +957,8 @@ controller_interface::return_type ControllerManager::switch_controller(
       "switch_controller() call. This should never happen.");
     throw std::runtime_error("CM's internal state is not correct. See the FATAL message above.");
   }
-  if (
-    !deactivate_command_interface_request_.empty() || !activate_command_interface_request_.empty())
+  if (!switch_params_.deactivate_command_interface_request.empty() ||
+      !switch_params_.activate_command_interface_request.empty())
   {
     RCLCPP_FATAL(
       get_logger(),
@@ -965,7 +966,7 @@ controller_interface::return_type ControllerManager::switch_controller(
       "switch_controller() call. This should never happen.");
     throw std::runtime_error("CM's internal state is not correct. See the FATAL message above.");
   }
-  if (!from_chained_mode_request_.empty() || !to_chained_mode_request_.empty())
+  if (!switch_params_.from_chained_mode_request.empty() || !switch_params_.to_chained_mode_request.empty())
   {
     RCLCPP_FATAL(
       get_logger(),
@@ -1039,19 +1040,19 @@ controller_interface::return_type ControllerManager::switch_controller(
   };
 
   // list all controllers to deactivate (check if all controllers exist)
-  auto ret = list_controllers(deactivate_controllers, deactivate_request_, "deactivate");
+  auto ret = list_controllers(deactivate_controllers, switch_params_.deactivate_request, "deactivate");
   if (ret != controller_interface::return_type::OK)
   {
-    deactivate_request_.clear();
+    switch_params_.deactivate_request.clear();
     return ret;
   }
 
   // list all controllers to activate (check if all controllers exist)
-  ret = list_controllers(activate_controllers, activate_request_, "activate");
+  ret = list_controllers(activate_controllers, switch_params_.activate_request, "activate");
   if (ret != controller_interface::return_type::OK)
   {
-    deactivate_request_.clear();
-    activate_request_.clear();
+    switch_params_.deactivate_request.clear();
+    switch_params_.activate_request.clear();
     return ret;
   }
 
@@ -1065,7 +1066,7 @@ controller_interface::return_type ControllerManager::switch_controller(
   propagate_deactivation_of_chained_mode(controllers);
 
   // check if controllers should be switched 'to' chained mode when controllers are activated
-  for (auto ctrl_it = activate_request_.begin(); ctrl_it != activate_request_.end(); ++ctrl_it)
+  for (auto ctrl_it = switch_params_.activate_request.begin(); ctrl_it != switch_params_.activate_request.end(); ++ctrl_it)
   {
     auto controller_it = std::find_if(
       controllers.begin(), controllers.end(),
@@ -1102,7 +1103,7 @@ controller_interface::return_type ControllerManager::switch_controller(
         //  controller_manager_msgs::srv::SwitchController::Request::MANIPULATE_CONTROLLERS_CHAIN);
         // remove controller that can not be activated from the activation request and step-back
         // iterator to correctly step to the next element in the list in the loop
-        activate_request_.erase(ctrl_it);
+        switch_params_.activate_request.erase(ctrl_it);
         --ctrl_it;
       }
       if (strictness == controller_manager_msgs::srv::SwitchController::Request::STRICT)
@@ -1116,7 +1117,7 @@ controller_interface::return_type ControllerManager::switch_controller(
   }
 
   // check if controllers should be deactivated if used in chained mode
-  for (auto ctrl_it = deactivate_request_.begin(); ctrl_it != deactivate_request_.end(); ++ctrl_it)
+  for (auto ctrl_it = switch_params_.deactivate_request.begin(); ctrl_it != switch_params_.deactivate_request.end(); ++ctrl_it)
   {
     auto controller_it = std::find_if(
       controllers.begin(), controllers.end(),
@@ -1148,7 +1149,7 @@ controller_interface::return_type ControllerManager::switch_controller(
       {
         // remove controller that can not be activated from the activation request and step-back
         // iterator to correctly step to the next element in the list in the loop
-        deactivate_request_.erase(ctrl_it);
+        switch_params_.deactivate_request.erase(ctrl_it);
         --ctrl_it;
       }
       if (strictness == controller_manager_msgs::srv::SwitchController::Request::STRICT)
@@ -1164,17 +1165,16 @@ controller_interface::return_type ControllerManager::switch_controller(
   for (const auto & controller : controllers)
   {
     auto to_chained_mode_list_it = std::find(
-      to_chained_mode_request_.begin(), to_chained_mode_request_.end(), controller.info.name);
-    bool in_to_chained_mode_list = to_chained_mode_list_it != to_chained_mode_request_.end();
+      switch_params_.to_chained_mode_request.begin(), switch_params_.to_chained_mode_request.end(), controller.info.name);
+    bool in_to_chained_mode_list = to_chained_mode_list_it != switch_params_.to_chained_mode_request.end();
 
     auto from_chained_mode_list_it = std::find(
-      from_chained_mode_request_.begin(), from_chained_mode_request_.end(), controller.info.name);
-    bool in_from_chained_mode_list = from_chained_mode_list_it != from_chained_mode_request_.end();
+      switch_params_.from_chained_mode_request.begin(), switch_params_.from_chained_mode_request.end(), controller.info.name);
+    bool in_from_chained_mode_list = from_chained_mode_list_it != switch_params_.from_chained_mode_request.end();
 
     auto deactivate_list_it =
-      std::find(deactivate_request_.begin(), deactivate_request_.end(), controller.info.name);
-    bool in_deactivate_list = deactivate_list_it != deactivate_request_.end();
-
+      std::find(switch_params_.deactivate_request.begin(), switch_params_.deactivate_request.end(), controller.info.name);
+    bool in_deactivate_list = deactivate_list_it != switch_params_.deactivate_request.end();
     const bool is_active = is_controller_active(*controller.c);
     const bool is_inactive = is_controller_inactive(*controller.c);
 
@@ -1183,31 +1183,31 @@ controller_interface::return_type ControllerManager::switch_controller(
     {
       if (is_active && !in_deactivate_list)
       {
-        deactivate_request_.push_back(controller.info.name);
-        activate_request_.push_back(controller.info.name);
+        switch_params_.deactivate_request.push_back(controller.info.name);
+        switch_params_.activate_request.push_back(controller.info.name);
       }
     }
 
     // get pointers to places in deactivate and activate lists ((de)activate lists have changed)
     deactivate_list_it =
-      std::find(deactivate_request_.begin(), deactivate_request_.end(), controller.info.name);
-    in_deactivate_list = deactivate_list_it != deactivate_request_.end();
+      std::find(switch_params_.deactivate_request.begin(), switch_params_.deactivate_request.end(), controller.info.name);
+    in_deactivate_list = deactivate_list_it != switch_params_.deactivate_request.end();
 
     auto activate_list_it =
-      std::find(activate_request_.begin(), activate_request_.end(), controller.info.name);
-    bool in_activate_list = activate_list_it != activate_request_.end();
+      std::find(switch_params_.activate_request.begin(), switch_params_.activate_request.end(), controller.info.name);
+    bool in_activate_list = activate_list_it != switch_params_.activate_request.end();
 
     auto handle_conflict = [&](const std::string & msg)
     {
       if (strictness == controller_manager_msgs::srv::SwitchController::Request::STRICT)
       {
         RCLCPP_ERROR(get_logger(), "%s", msg.c_str());
-        deactivate_request_.clear();
-        deactivate_command_interface_request_.clear();
-        activate_request_.clear();
-        activate_command_interface_request_.clear();
-        to_chained_mode_request_.clear();
-        from_chained_mode_request_.clear();
+        switch_params_.deactivate_request.clear();
+        switch_params_.deactivate_command_interface_request.clear();
+        switch_params_.activate_request.clear();
+        switch_params_.activate_command_interface_request.clear();
+        switch_params_.to_chained_mode_request.clear();
+        switch_params_.from_chained_mode_request.clear();
         return controller_interface::return_type::ERROR;
       }
       RCLCPP_WARN(get_logger(), "%s", msg.c_str());
@@ -1224,7 +1224,7 @@ controller_interface::return_type ControllerManager::switch_controller(
         return conflict_status;
       }
       in_deactivate_list = false;
-      deactivate_request_.erase(deactivate_list_it);
+      switch_params_.deactivate_request.erase(deactivate_list_it);
     }
 
     // check for doubled activation
@@ -1237,7 +1237,7 @@ controller_interface::return_type ControllerManager::switch_controller(
         return conflict_status;
       }
       in_activate_list = false;
-      activate_request_.erase(activate_list_it);
+      switch_params_.activate_request.erase(activate_list_it);
     }
 
     // check for illegal activation of an unconfigured/finalized controller
@@ -1251,7 +1251,7 @@ controller_interface::return_type ControllerManager::switch_controller(
         return conflict_status;
       }
       in_activate_list = false;
-      activate_request_.erase(activate_list_it);
+      switch_params_.activate_request.erase(activate_list_it);
     }
 
     const auto extract_interfaces_for_controller =
@@ -1276,15 +1276,15 @@ controller_interface::return_type ControllerManager::switch_controller(
 
     if (in_activate_list)
     {
-      extract_interfaces_for_controller(controller, activate_command_interface_request_);
+      extract_interfaces_for_controller(controller, switch_params_.activate_command_interface_request);
     }
     if (in_deactivate_list)
     {
-      extract_interfaces_for_controller(controller, deactivate_command_interface_request_);
+      extract_interfaces_for_controller(controller, switch_params_.deactivate_command_interface_request);
     }
   }
 
-  if (activate_request_.empty() && deactivate_request_.empty())
+  if (switch_params_.activate_request.empty() && switch_params_.deactivate_request.empty())
   {
     RCLCPP_INFO(get_logger(), "Empty activate and deactivate list, not requesting switch");
     clear_requests();
@@ -1292,10 +1292,10 @@ controller_interface::return_type ControllerManager::switch_controller(
   }
 
   if (
-    !activate_command_interface_request_.empty() || !deactivate_command_interface_request_.empty())
+    !switch_params_.activate_command_interface_request.empty() || !switch_params_.deactivate_command_interface_request.empty())
   {
     if (!resource_manager_->prepare_command_mode_switch(
-          activate_command_interface_request_, deactivate_command_interface_request_))
+          switch_params_.activate_command_interface_request, switch_params_.deactivate_command_interface_request))
     {
       RCLCPP_ERROR(
         get_logger(),
@@ -1318,16 +1318,21 @@ controller_interface::return_type ControllerManager::switch_controller(
   }
   switch_params_.do_switch = true;
   // wait until switch is finished
-  RCLCPP_DEBUG(get_logger(), "Requested atomic controller switch from realtime loop");
-  std::unique_lock<std::mutex> switch_params_guard(switch_params_.mutex, std::defer_lock);
-  if (!switch_params_.cv.wait_for(
-        switch_params_guard, switch_params_.timeout, [this] { return !switch_params_.do_switch; }))
-  {
-    RCLCPP_ERROR(
-      get_logger(), "Switch controller timed out after %f seconds!",
-      static_cast<double>(switch_params_.timeout.count()) / 1e9);
-    clear_requests();
-    return controller_interface::return_type::ERROR;
+  if (switch_params_.activate_asap) {
+    RCLCPP_DEBUG(get_logger(), "Requested atomic controller switch from realtime loop");
+    std::unique_lock<std::mutex> switch_params_guard(switch_params_.mutex, std::defer_lock);
+    if (!switch_params_.cv.wait_for(
+          switch_params_guard, switch_params_.timeout, [this] { return !switch_params_.do_switch; }))
+    {
+      RCLCPP_ERROR(
+        get_logger(), "Switch controller timed out after %f seconds!",
+        static_cast<double>(switch_params_.timeout.count()) / 1e9);
+      clear_requests();
+      return controller_interface::return_type::ERROR;
+    }
+  } else {
+    RCLCPP_DEBUG(get_logger(), "Requested controller switch from non-realtime loop");
+    manage_switch();
   }
 
   // copy the controllers spec from the used to the unused list
@@ -1357,8 +1362,8 @@ controller_interface::return_type ControllerManager::switch_controller(
       controller.info.claimed_interfaces.clear();
     }
     if (
-      std::find(activate_request_.begin(), activate_request_.end(), controller.info.name) !=
-      activate_request_.end())
+      std::find(switch_params_.activate_request.begin(), switch_params_.activate_request.end(), controller.info.name) !=
+      switch_params_.activate_request.end())
     {
       if (!is_controller_active(controller.c))
       {
@@ -1370,10 +1375,10 @@ controller_interface::return_type ControllerManager::switch_controller(
     /// @note The following is the case of the real controllers that are deactivated and doesn't
     /// include the chained controllers that are deactivated and activated
     if (
-      std::find(deactivate_request_.begin(), deactivate_request_.end(), controller.info.name) !=
-        deactivate_request_.end() &&
-      std::find(activate_request_.begin(), activate_request_.end(), controller.info.name) ==
-        activate_request_.end())
+      std::find(switch_params_.deactivate_request.begin(), switch_params_.deactivate_request.end(), controller.info.name) !=
+        switch_params_.deactivate_request.end() &&
+      std::find(switch_params_.activate_request.begin(), switch_params_.activate_request.end(), controller.info.name) ==
+        switch_params_.activate_request.end())
     {
       if (is_controller_active(controller.c))
       {
@@ -1457,26 +1462,18 @@ void ControllerManager::manage_switch()
   }
   // Ask hardware interfaces to change mode
   if (!resource_manager_->perform_command_mode_switch(
-        activate_command_interface_request_, deactivate_command_interface_request_))
+        switch_params_.activate_command_interface_request, switch_params_.deactivate_command_interface_request))
   {
     RCLCPP_ERROR(get_logger(), "Error while performing mode switch.");
   }
 
   deactivate_controllers();
 
-  switch_chained_mode(to_chained_mode_request_, true);
-  switch_chained_mode(from_chained_mode_request_, false);
+  switch_chained_mode(switch_params_.to_chained_mode_request, true);
+  switch_chained_mode(switch_params_.from_chained_mode_request, false);
 
   // activate controllers once the switch is fully complete
-  if (!switch_params_.activate_asap)
-  {
-    activate_controllers();
-  }
-  else
-  {
-    // activate controllers as soon as their required joints are done switching
-    activate_controllers_asap();
-  }
+  activate_controllers();
 
   // TODO(destogl): move here "do_switch = false"
 
@@ -1489,7 +1486,7 @@ void ControllerManager::deactivate_controllers()
   std::vector<ControllerSpec> & rt_controller_list =
     rt_controllers_wrapper_.update_and_get_used_by_rt_list();
   // stop controllers
-  for (const auto & controller_name : deactivate_request_)
+  for (const auto & controller_name : switch_params_.deactivate_request)
   {
     auto found_it = std::find_if(
       rt_controller_list.begin(), rt_controller_list.end(),
@@ -1579,7 +1576,7 @@ void ControllerManager::activate_controllers()
   std::vector<ControllerSpec> & rt_controller_list =
     rt_controllers_wrapper_.update_and_get_used_by_rt_list();
   std::vector<std::string> failed_controllers_command_interfaces;
-  for (const auto & controller_name : activate_request_)
+  for (const auto & controller_name : switch_params_.activate_request)
   {
     auto found_it = std::find_if(
       rt_controller_list.begin(), rt_controller_list.end(),
@@ -2187,6 +2184,15 @@ controller_interface::return_type ControllerManager::update(
 
   for (auto loaded_controller : rt_controller_list)
   {
+    if (
+      switch_params_.do_switch && !switch_params_.activate_asap &&
+      switch_params_.skip_cycle(loaded_controller))
+    {
+      RCLCPP_DEBUG(
+        get_logger(), "Skipping update for controller '%s' as it is being switched",
+        loaded_controller.info.name.c_str());
+      continue;
+    }
     // TODO(v-lopez) we could cache this information
     // https://github.com/ros-controls/ros2_control/issues/153
     if (is_controller_active(*loaded_controller.c))
@@ -2222,8 +2228,9 @@ controller_interface::return_type ControllerManager::update(
   }
 
   // there are controllers to (de)activate
-  if (switch_params_.do_switch)
+  if (switch_params_.do_switch && switch_params_.activate_asap)
   {
+    RCLCPP_DEBUG(get_logger(), "Activating controllers ASAP.");
     manage_switch();
   }
 
@@ -2318,9 +2325,9 @@ void ControllerManager::propagate_deactivation_of_chained_mode(
   {
     // get pointers to places in deactivate and activate lists ((de)activate lists have changed)
     auto deactivate_list_it =
-      std::find(deactivate_request_.begin(), deactivate_request_.end(), controller.info.name);
+      std::find(switch_params_.deactivate_request.begin(), switch_params_.deactivate_request.end(), controller.info.name);
 
-    if (deactivate_list_it != deactivate_request_.end())
+    if (deactivate_list_it != switch_params_.deactivate_request.end())
     {
       // if controller is not active then skip adding following-controllers to "from" chained mode
       // request
@@ -2346,10 +2353,10 @@ void ControllerManager::propagate_deactivation_of_chained_mode(
           // with matching interface name to "from" chained mode list (if not already in it)
           if (
             std::find(
-              from_chained_mode_request_.begin(), from_chained_mode_request_.end(),
-              following_ctrl_it->info.name) == from_chained_mode_request_.end())
+              switch_params_.from_chained_mode_request.begin(), switch_params_.from_chained_mode_request.end(),
+              following_ctrl_it->info.name) == switch_params_.from_chained_mode_request.end())
           {
-            from_chained_mode_request_.push_back(following_ctrl_it->info.name);
+            switch_params_.from_chained_mode_request.push_back(following_ctrl_it->info.name);
             RCLCPP_DEBUG(
               get_logger(), "Adding controller '%s' in 'from chained mode' request.",
               following_ctrl_it->info.name.c_str());
@@ -2405,8 +2412,8 @@ controller_interface::return_type ControllerManager::check_following_controllers
       // will following controller be deactivated?
       if (
         std::find(
-          deactivate_request_.begin(), deactivate_request_.end(), following_ctrl_it->info.name) !=
-        deactivate_request_.end())
+          switch_params_.deactivate_request.begin(), switch_params_.deactivate_request.end(), following_ctrl_it->info.name) !=
+        switch_params_.deactivate_request.end())
       {
         RCLCPP_WARN(
           get_logger(), "The following controller with name '%s' will be deactivated.",
@@ -2416,8 +2423,8 @@ controller_interface::return_type ControllerManager::check_following_controllers
     }
     // check if following controller will not be activated
     else if (
-      std::find(activate_request_.begin(), activate_request_.end(), following_ctrl_it->info.name) ==
-      activate_request_.end())
+      std::find(switch_params_.activate_request.begin(), switch_params_.activate_request.end(), following_ctrl_it->info.name) ==
+      switch_params_.activate_request.end())
     {
       RCLCPP_WARN(
         get_logger(),
@@ -2440,16 +2447,16 @@ controller_interface::return_type ControllerManager::check_following_controllers
     //  controller_manager_msgs::srv::SwitchController::Request::MANIPULATE_CONTROLLERS_CHAIN)
     // {
     // // insert to the begin of activate request list to be activated before preceding controller
-    //   activate_request_.insert(activate_request_.begin(), following_ctrl_name);
+    //   switch_params_.activate_request.insert(switch_params_.activate_request.begin(), following_ctrl_name);
     // }
     if (!following_ctrl_it->c->is_in_chained_mode())
     {
       auto found_it = std::find(
-        to_chained_mode_request_.begin(), to_chained_mode_request_.end(),
+        switch_params_.to_chained_mode_request.begin(), switch_params_.to_chained_mode_request.end(),
         following_ctrl_it->info.name);
-      if (found_it == to_chained_mode_request_.end())
+      if (found_it == switch_params_.to_chained_mode_request.end())
       {
-        to_chained_mode_request_.push_back(following_ctrl_it->info.name);
+        switch_params_.to_chained_mode_request.push_back(following_ctrl_it->info.name);
         // if it is a chainable controller, make the reference interfaces available on preactivation
         // (This is needed when you activate a couple of chainable controller altogether)
         resource_manager_->make_controller_reference_interfaces_available(
@@ -2463,11 +2470,11 @@ controller_interface::return_type ControllerManager::check_following_controllers
     {
       // Check if following controller is in 'from' chained mode list and remove it, if so
       auto found_it = std::find(
-        from_chained_mode_request_.begin(), from_chained_mode_request_.end(),
+        switch_params_.from_chained_mode_request.begin(), switch_params_.from_chained_mode_request.end(),
         following_ctrl_it->info.name);
-      if (found_it != from_chained_mode_request_.end())
+      if (found_it != switch_params_.from_chained_mode_request.end())
       {
-        from_chained_mode_request_.erase(found_it);
+        switch_params_.from_chained_mode_request.erase(found_it);
         RCLCPP_DEBUG(
           get_logger(),
           "Removing controller '%s' in 'from chained mode' request because it "
@@ -2528,8 +2535,8 @@ controller_interface::return_type ControllerManager::check_preceeding_controller
       if (
         is_controller_inactive(preceding_ctrl_it->c) &&
         std::find(
-          activate_request_.begin(), activate_request_.end(), preceding_ctrl_it->info.name) !=
-          activate_request_.end())
+          switch_params_.activate_request.begin(), switch_params_.activate_request.end(), preceding_ctrl_it->info.name) !=
+          switch_params_.activate_request.end())
       {
         RCLCPP_WARN(
           get_logger(),
@@ -2542,8 +2549,8 @@ controller_interface::return_type ControllerManager::check_preceeding_controller
       else if (
         is_controller_active(preceding_ctrl_it->c) &&
         std::find(
-          deactivate_request_.begin(), deactivate_request_.end(), preceding_ctrl_it->info.name) ==
-          deactivate_request_.end())
+          switch_params_.deactivate_request.begin(), switch_params_.deactivate_request.end(), preceding_ctrl_it->info.name) ==
+          switch_params_.deactivate_request.end())
       {
         RCLCPP_WARN(
           get_logger(),
@@ -2558,7 +2565,7 @@ controller_interface::return_type ControllerManager::check_preceeding_controller
       //  controller_manager_msgs::srv::SwitchController::Request::MANIPULATE_CONTROLLERS_CHAIN)
       // {
       // // insert to the begin of activate request list to be activated before preceding controller
-      //   activate_request_.insert(activate_request_.begin(), preceding_ctrl_name);
+      //   switch_params_.activate_request.insert(switch_params_.activate_request.begin(), preceding_ctrl_name);
       // }
     }
   }

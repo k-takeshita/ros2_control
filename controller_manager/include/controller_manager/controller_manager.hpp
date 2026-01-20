@@ -55,6 +55,45 @@
 
 namespace controller_manager
 {
+
+template <typename Container, typename T>
+[[nodiscard]] auto get_item_iterator(const Container & container, const T & item)
+{
+  if constexpr (std::is_same_v<Container, std::vector<T>>)
+  {
+    return std::find(container.cbegin(), container.cend(), item);
+  }
+  else if constexpr (
+    std::is_same_v<Container, std::map<T, typename Container::mapped_type>> ||
+    std::is_same_v<Container, std::unordered_map<T, typename Container::mapped_type>>)
+  {
+    return container.find(item);
+  }
+  else
+  {
+    using is_vector = std::is_same<Container, std::vector<T>>;
+    using is_map = std::is_same<Container, std::map<T, typename Container::mapped_type>>;
+    using is_unordered_map =
+      std::is_same<Container, std::unordered_map<T, typename Container::mapped_type>>;
+    // Handle unsupported container types
+    static_assert(
+      is_vector::value || is_map::value || is_unordered_map::value,
+      "Only std::vector, std::map and std::unordered_map are supported.");
+  }
+}
+
+/**
+ * @brief Check if the item is in the container.
+ * @param container The container to search in.
+ * @param item The item to search for.
+ * @return True if the item is in the container, false otherwise.
+ */
+template <typename Container, typename T>
+[[nodiscard]] bool has_item(const Container & container, const T & item)
+{
+  return get_item_iterator(container, item) != container.cend();
+}
+
 using ControllersListIterator = std::vector<controller_manager::ControllerSpec>::const_iterator;
 
 CONTROLLER_MANAGER_PUBLIC rclcpp::NodeOptions get_cm_node_options();
@@ -508,11 +547,6 @@ private:
   rclcpp::Service<controller_manager_msgs::srv::SetHardwareComponentState>::SharedPtr
     set_hardware_component_state_service_;
 
-  std::vector<std::string> activate_request_, deactivate_request_;
-  std::vector<std::string> to_chained_mode_request_, from_chained_mode_request_;
-  std::vector<std::string> activate_command_interface_request_,
-    deactivate_command_interface_request_;
-
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr robot_description_subscription_;
 
   struct SwitchParams
@@ -525,17 +559,33 @@ private:
       activate_asap = false;
     }
 
-    bool do_switch;
+    bool skip_cycle(const controller_manager::ControllerSpec & spec) const
+    {
+      const std::string controller_name = spec.info.name;
+      return has_item(activate_request, controller_name) ||
+             has_item(deactivate_request, controller_name) ||
+             has_item(to_chained_mode_request, controller_name) ||
+             has_item(from_chained_mode_request, controller_name);
+    }
+
+    std::atomic_bool do_switch;
     bool started;
 
     // Switch options
     int strictness;
-    bool activate_asap;
+    std::atomic_bool activate_asap;
     std::chrono::nanoseconds timeout;
 
     // conditional variable and mutex to wait for the switch to complete
     std::condition_variable cv;
     std::mutex mutex;
+
+    std::vector<std::string> activate_request;
+    std::vector<std::string> deactivate_request;
+    std::vector<std::string> to_chained_mode_request;
+    std::vector<std::string> from_chained_mode_request;
+    std::vector<std::string> activate_command_interface_request;
+    std::vector<std::string> deactivate_command_interface_request;
   };
 
   SwitchParams switch_params_;
