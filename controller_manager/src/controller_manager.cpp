@@ -1509,6 +1509,12 @@ void ControllerManager::deactivate_controllers()
         RCLCPP_ERROR(
           get_logger(), "After deactivating, controller '%s' is in state '%s', expected Inactive",
           controller_name.c_str(), new_state.label().c_str());
+      } else {
+        const auto it = std::find(activated_controllers_.begin(), activated_controllers_.end(), controller_name);
+        if (it != activated_controllers_.end())
+        {
+          activated_controllers_.erase(it);
+        }
       }
     }
   }
@@ -1697,6 +1703,7 @@ void ControllerManager::activate_controllers()
     {
       resource_manager_->make_controller_reference_interfaces_available(controller_name);
     }
+    activated_controllers_.push_back(controller_name);
   }
   // Now prepare and perform the stop interface switching as this is needed for exclusive
   // interfaces
@@ -2196,9 +2203,12 @@ controller_interface::return_type ControllerManager::update(
       AddUpdatePeriod(loaded_controller.info.name, start, false);
       continue;
     }
-    // TODO(v-lopez) we could cache this information
-    // https://github.com/ros-controls/ros2_control/issues/153
-    if (is_controller_active(*loaded_controller.c))
+    const auto it = std::find(
+        activated_controllers_.begin(), activated_controllers_.end(), loaded_controller.info.name);
+    if (it != activated_controllers_.end())
+    // // TODO(v-lopez) we could cache this information
+    // // https://github.com/ros-controls/ros2_control/issues/153
+    // if (is_controller_active(*loaded_controller.c))
     {
       const auto controller_update_rate = loaded_controller.c->get_update_rate();
       const auto controller_update_factor =
