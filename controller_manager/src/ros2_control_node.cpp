@@ -166,6 +166,12 @@ int main(int argc, char ** argv)
                 std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - update_end_time)
                   .count()) /
                 1.e6);
+            for (const auto& update_period : cm->update_periods()) {
+              RCLCPP_WARN(cm->get_logger(), "    Controller '%s' update took %.3f ms, updated: %d",
+                          update_period.name.c_str(),
+                          static_cast<double>(update_period.period_ns) / 1.0e6,
+                          update_period.do_update);
+            }
           }
           std::this_thread::sleep_until(next_iteration_time);
         }

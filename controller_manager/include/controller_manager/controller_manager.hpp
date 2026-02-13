@@ -589,6 +589,25 @@ private:
   };
 
   SwitchParams switch_params_;
+
+ public:
+  struct UpdatePeriod {
+    std::string name;
+    uint64_t period_ns;
+    bool do_update;
+
+    UpdatePeriod(const std::string& name_, uint64_t period_ns_, bool do_update_)
+        : name(name_), period_ns(period_ns_), do_update(do_update_) {}
+  };
+  std::vector<UpdatePeriod>& update_periods() { return update_periods_; }
+
+ private:
+  void AddUpdatePeriod(const std::string& name, const std::chrono::steady_clock::time_point& start, bool do_update) {
+    const auto end = std::chrono::steady_clock::now();
+    update_periods_.emplace_back(
+        name, std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count(), do_update);
+  }
+  std::vector<UpdatePeriod> update_periods_;
 };
 
 }  // namespace controller_manager
