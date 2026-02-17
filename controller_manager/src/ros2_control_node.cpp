@@ -46,6 +46,8 @@ int main(int argc, char ** argv)
 
   const bool use_sim_time = cm->get_parameter_or("use_sim_time", false);
 
+  const bool time_exceeds_warning = cm->get_parameter_or<bool>("time_exceeds_warning", true);
+
   const bool has_realtime = realtime_tools::has_realtime_kernel();
   const bool lock_memory = cm->get_parameter_or<bool>("lock_memory", has_realtime);
   if (lock_memory)
@@ -64,7 +66,7 @@ int main(int argc, char ** argv)
     thread_priority);
 
   std::thread cm_thread(
-    [cm, thread_priority, use_sim_time]()
+    [cm, thread_priority, use_sim_time, time_exceeds_warning]()
     {
       rclcpp::Parameter cpu_affinity_param;
       if (cm->get_parameter("cpu_affinity", cpu_affinity_param))
@@ -147,25 +149,33 @@ int main(int argc, char ** argv)
             const double cm_period = 1.e3 / static_cast<double>(cm->get_update_rate());
             const int overrun_count = static_cast<int>(std::ceil(time_diff / cm_period));
             next_iteration_time += (overrun_count * period);
-            RCLCPP_WARN(
-              cm->get_logger(),
-              "Controller Manager '%s' overran its cycle time by %.3f ms (%d overrun(s))",
-              cm->get_name(), time_diff, overrun_count);
-            RCLCPP_WARN(
-              cm->get_logger(),
-              "  Read took %.3f ms, Update took %.3f ms, Write took %.3f ms",
-              static_cast<double>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(read_end_time - start_time)
-                  .count()) /
-                1.e6,
-              static_cast<double>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(update_end_time - read_end_time)
-                  .count()) /
-                1.e6,
-              static_cast<double>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - update_end_time)
-                  .count()) /
-                1.e6);
+            if (time_exceeds_warning) {
+              RCLCPP_WARN(
+                cm->get_logger(),
+                "Controller Manager '%s' overran its cycle time by %.3f ms (%d overrun(s))",
+                cm->get_name(), time_diff, overrun_count);
+              RCLCPP_WARN(
+                cm->get_logger(),
+                "  Read took %.3f ms, Update took %.3f ms, Write took %.3f ms",
+                static_cast<double>(
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(read_end_time - start_time)
+                    .count()) /
+                  1.e6,
+                static_cast<double>(
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(update_end_time - read_end_time)
+                    .count()) /
+                  1.e6,
+                static_cast<double>(
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - update_end_time)
+                    .count()) /
+                  1.e6);
+              for (const auto& update_period : cm->update_periods()) {
+                RCLCPP_WARN(cm->get_logger(), "    Controller '%s' update took %.3f ms, updated: %d",
+                            update_period.name.c_str(),
+                            static_cast<double>(update_period.period_ns) / 1.0e6,
+                            update_period.do_update);
+              }
+            }
           }
           std::this_thread::sleep_until(next_iteration_time);
         }

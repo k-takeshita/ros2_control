@@ -2182,8 +2182,10 @@ controller_interface::return_type ControllerManager::update(
   ++update_loop_counter_;
   update_loop_counter_ %= update_rate_;
 
+  update_periods_.clear();
   for (auto loaded_controller : rt_controller_list)
   {
+    const auto start = std::chrono::steady_clock::now();
     if (
       switch_params_.do_switch && !switch_params_.activate_asap &&
       switch_params_.skip_cycle(loaded_controller))
@@ -2191,6 +2193,7 @@ controller_interface::return_type ControllerManager::update(
       RCLCPP_DEBUG(
         get_logger(), "Skipping update for controller '%s' as it is being switched",
         loaded_controller.info.name.c_str());
+      AddUpdatePeriod(loaded_controller.info.name, start, false);
       continue;
     }
     // TODO(v-lopez) we could cache this information
@@ -2223,7 +2226,12 @@ controller_interface::return_type ControllerManager::update(
             loaded_controller.info.name.c_str());
           ret = controller_ret;
         }
+        AddUpdatePeriod(loaded_controller.info.name, start, true);
+      } else {
+        AddUpdatePeriod(loaded_controller.info.name, start, false);
       }
+    } else {
+      AddUpdatePeriod(loaded_controller.info.name, start, false);
     }
   }
 
