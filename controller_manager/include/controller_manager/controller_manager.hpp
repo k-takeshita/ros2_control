@@ -608,6 +608,8 @@ private:
         name, std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count(), do_update);
   }
   std::vector<UpdatePeriod> update_periods_;
+
+  std::vector<std::string> activated_controllers_;
 };
 
 }  // namespace controller_manager
