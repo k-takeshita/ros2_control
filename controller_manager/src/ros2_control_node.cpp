@@ -21,6 +21,7 @@
 
 #include "controller_manager/controller_manager.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "realtime_tools/lock_free_queue.hpp"
 #include "realtime_tools/realtime_helpers.hpp"
 
 using namespace std::chrono_literals;
@@ -31,6 +32,14 @@ namespace
 // This value is used when configuring the main loop to use SCHED_FIFO scheduling
 // We use a midpoint RT priority to allow maximum flexibility to users
 int const kSchedPriority = 50;
+
+struct ControllerUpdateLog
+{
+  uint64_t timestamp_ns;
+  char name[64];
+  double period_ms;
+  bool updated;
+};
 
 }  // namespace
 
@@ -63,8 +72,44 @@ int main(int argc, char ** argv)
     cm->get_logger(), "Spawning %s RT thread with scheduler priority: %d", cm->get_name(),
     thread_priority);
 
+  constexpr size_t LOG_QUEUE_SIZE = 4096;
+  realtime_tools::LockFreeSPSCQueue<ControllerUpdateLog, LOG_QUEUE_SIZE> log_queue;
+  uint64_t log_dropped_count = 0;
+  std::atomic<bool> logger_running{true};
+
+  std::thread logger_thread([&]()
+  {
+    std::string file_name = cm->get_fully_qualified_name();
+    std::replace(file_name.begin(), file_name.end(), '/', '_');
+    std::string log_path = std::string("/tmp/controller_update") + file_name + ".csv";
+    FILE *fp = fopen(log_path.c_str(), "w");
+
+    fprintf(fp, "timestamp_ns,controller,period_ms,updated\n");
+
+    ControllerUpdateLog log;
+
+    while (logger_running)
+    {
+      while (log_queue.pop(log))
+      {
+        fprintf(fp, "%lu,%s,%.6f,%d\n",
+                log.timestamp_ns,
+                log.name,
+                log.period_ms,
+                log.updated);
+      }
+
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    printf("Logger thread is shutting down. Dropped %lu log entries.\n", log_dropped_count);
+
+    fclose(fp);
+  });
+
+
   std::thread cm_thread(
-    [cm, thread_priority, use_sim_time]()
+    [cm, thread_priority, use_sim_time, &log_queue, &log_dropped_count]()
     {
       rclcpp::Parameter cpu_affinity_param;
       if (cm->get_parameter("cpu_affinity", cpu_affinity_param))
@@ -173,6 +218,26 @@ int main(int argc, char ** argv)
                           update_period.do_update);
             }
           }
+          for (const auto & update_period : cm->update_periods())
+          {
+            ControllerUpdateLog log;
+            log.timestamp_ns = cm->now().nanoseconds();
+
+            strncpy(log.name,
+                    update_period.name.c_str(),
+                    sizeof(log.name) - 1);
+
+            log.name[sizeof(log.name) - 1] = '\0';
+
+            log.period_ms =
+                static_cast<double>(update_period.period_ns) / 1e6;
+
+            log.updated = update_period.do_update;
+
+            if (!log_queue.push(log)) {
+              log_dropped_count++;
+            }
+          }
           std::this_thread::sleep_until(next_iteration_time);
         }
       }
@@ -181,6 +246,10 @@ int main(int argc, char ** argv)
   executor->add_node(cm);
   executor->spin();
   cm_thread.join();
+
+  logger_running = false;
+  logger_thread.join();
+
   rclcpp::shutdown();
   return 0;
 }
